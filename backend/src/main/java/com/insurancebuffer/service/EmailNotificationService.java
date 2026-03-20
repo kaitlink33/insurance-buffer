@@ -5,8 +5,8 @@ import com.insurancebuffer.model.LeadProfile;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import javax.mail.*;
-import javax.mail.internet.*;
+import jakarta.mail.*;
+import jakarta.mail.internet.*;
 import java.util.Properties;
 import java.util.logging.Logger;
 
@@ -67,17 +67,16 @@ public class EmailNotificationService {
 
         if (isHighTicket && lead instanceof HighTicketLead) {
             HighTicketLead ht = (HighTicketLead) lead;
-            sb.append("🚨 HIGH TICKET ALERT 🚨\n");
+            sb.append("HIGH TICKET ALERT\n");
             sb.append("Ticket Score: ").append(ht.getTicketScore()).append("/100\n");
-            sb.append("Signals: ").append(String.join(", ", ht.getHighValueSignals())).append("\n");
-            sb.append("\n");
+            sb.append("Signals: ").append(String.join(", ", ht.getHighValueSignals())).append("\n\n");
         }
 
         sb.append("A new potential client just finished speaking with your AI advisor.\n\n");
         sb.append("--- CLIENT DETAILS ---\n");
         sb.append("Name: ").append(lead.getVisitorName() != null ? lead.getVisitorName() : "Not provided").append("\n");
         sb.append("Contact: ").append(lead.getContactInfo() != null ? lead.getContactInfo() : "Not provided").append("\n");
-        sb.append("Wants Follow-up: ").append(lead.isWantsReferral() ? "YES ✓" : "Not yet").append("\n");
+        sb.append("Wants Follow-up: ").append(lead.isWantsReferral() ? "YES" : "Not yet").append("\n");
         sb.append("Captured: ").append(lead.getCapturedAt()).append("\n\n");
 
         sb.append("--- INSURANCE NEEDS ---\n");
@@ -85,7 +84,7 @@ public class EmailNotificationService {
             sb.append("Not captured\n");
         } else {
             for (String need : lead.getInsuranceNeeds()) {
-                sb.append("• ").append(need).append("\n");
+                sb.append("- ").append(need).append("\n");
             }
         }
 
@@ -94,7 +93,7 @@ public class EmailNotificationService {
             sb.append("Not captured\n");
         } else {
             for (String point : lead.getPainPoints()) {
-                sb.append("• ").append(point).append("\n");
+                sb.append("- ").append(point).append("\n");
             }
         }
 
@@ -105,15 +104,13 @@ public class EmailNotificationService {
 
         sb.append("\n--- SESSION ---\n");
         sb.append("Session ID: ").append(lead.getSessionId()).append("\n");
-
-        sb.append("\n\nThis lead was captured automatically by your AI advisor tool.\n");
+        sb.append("\nThis lead was captured automatically by your AI advisor tool.\n");
 
         return sb.toString();
     }
 
     private void sendEmail(String subject, String body) {
         if (smtpUsername == null || smtpUsername.isBlank()) {
-            // Log only if email not configured - graceful degradation
             logger.warning("Email not configured. Would have sent: " + subject);
             logger.info("Email body:\n" + body);
             return;
