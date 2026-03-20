@@ -19,6 +19,7 @@
 
     <properties>
         <java.version>17</java.version>
+        <start-class>com.insurancebuffer.InsuranceBufferApplication</start-class>
     </properties>
 
     <dependencies>
@@ -53,6 +54,9 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <mainClass>com.insurancebuffer.InsuranceBufferApplication</mainClass>
+                </configuration>
             </plugin>
         </plugins>
     </build>
