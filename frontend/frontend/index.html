@@ -710,11 +710,12 @@
 
       <!-- Referral Card (shown after call) -->
       <div id="referral-card">
-        <h4>Ready to take the next step?</h4>
-        <p>Your advisor is ready for you. Click below to connect and get your personalized quote.</p>
-        <a href="https://www.fbfs.com/find-an-agent/brettkendig" target="_blank" rel="noopener" class="btn-referral">
+        <h4>Great news — your advisor is ready!</h4>
+        <p>Based on our conversation, we have coverage solutions that match your needs. Click below to connect with your local advisor for a personalized quote.</p>
+        <a href="https://www.fbfs.com/find-an-agent/brettkendig" target="_blank" rel="noopener" class="btn-referral" id="referral-btn">
           Connect with My Advisor →
         </a>
+        <p style="margin-top:10px;font-size:11px;color:var(--text-muted)">Opens in a new tab</p>
       </div>
 
       <!-- Controls -->
@@ -905,7 +906,7 @@ async function startConversation() {
     });
 
     room.on(RoomEvent.Disconnected, () => {
-      if (callActive) handleCallEnded({});
+      handleCallEnded({});
     });
 
     // 4. Connect
@@ -943,6 +944,7 @@ function endConversation() {
 // HANDLE CALL ENDED
 // ============================================================
 function handleCallEnded(data) {
+  if (!callActive && !sessionId) return; // prevent double-fire
   callActive = false;
   setStatus('Conversation complete', '');
   setVoiceActive(false);
@@ -953,12 +955,15 @@ function handleCallEnded(data) {
   // Build transcript
   leadData.rawTranscript = transcript.map(m => m.role.toUpperCase() + ': ' + m.content).join('\n');
 
-  // Check for referral intent
+  // Referral detection - broad keyword match on full transcript
   const fullText = leadData.rawTranscript.toLowerCase();
-  if (fullText.includes('yes') || fullText.includes('learn more') ||
-      fullText.includes('connect') || fullText.includes('speak with')) {
-    leadData.wantsReferral = true;
-  }
+  const referralWords = ['yes', 'sure', 'okay', 'please', 'learn more', 'connect',
+    'speak with', 'talk to', 'advisor', 'quote', 'more information', 'interested',
+    'sounds good', 'id like', "i'd like", 'absolutely', 'definitely'];
+  leadData.wantsReferral = referralWords.some(w => fullText.includes(w));
+
+  // Always show referral card after any completed conversation
+  showReferralCard();
 
   submitLead();
 }
@@ -980,17 +985,21 @@ async function submitLead() {
       rawTranscript:       leadData.rawTranscript
     };
 
+    console.log('Submitting lead to backend...', BACKEND_URL);
+    console.log('Transcript length:', leadData.rawTranscript.length, 'chars');
+
     const res = await fetch(BACKEND_URL + '/api/submit-lead', {
       method: 'POST',
+      mode: 'cors',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
 
     if (res.ok) {
       const result = await res.json();
-      if (leadData.wantsReferral || result.referralUrl) {
-        showReferralCard();
-      }
+      console.log('Lead submitted successfully:', result.leadType, 'score:', result.score);
+    } else {
+      console.error('Lead submission failed:', res.status, await res.text());
     }
   } catch (err) {
     console.error('Lead submission error:', err);
