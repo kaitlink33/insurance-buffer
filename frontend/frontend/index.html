@@ -863,10 +863,10 @@ async function startConversation() {
         const msg = JSON.parse(raw);
 
         // Log every message so we can see Retell's exact format
-        console.log('Retell data packet:', msg.type || msg.event, msg);
+        console.log('Retell data packet:', msg.type || msg.event_type || msg.event, msg);
 
         // --- FORMAT 1: Retell "update" with full transcript array ---
-        if (msg.type === 'update' && Array.isArray(msg.transcript)) {
+        if ((msg.type === 'update' || msg.event_type === 'update') && Array.isArray(msg.transcript)) {
           const container = document.getElementById('chat-messages');
           const empty = document.getElementById('empty-state');
           if (empty) empty.remove();
@@ -880,7 +880,7 @@ async function startConversation() {
         }
 
         // --- FORMAT 2: Single transcript turn ---
-        if (msg.type === 'transcript') {
+        if (msg.type === 'transcript' || msg.event_type === 'transcript') {
           const d = msg.data || msg;
           const role = (d.role === 'agent' || d.speaker === 'agent') ? 'agent' : 'user';
           const content = d.content || d.text || d.message || '';
@@ -888,21 +888,21 @@ async function startConversation() {
         }
 
         // --- FORMAT 3: Retell "clear_transcript" ---
-        if (msg.type === 'clear_transcript') {
+        if (msg.type === 'clear_transcript' || msg.event_type === 'clear_transcript') {
           document.getElementById('chat-messages').innerHTML = '';
           transcript = [];
         }
 
         // --- FORMAT 4: Call metadata / summary at end ---
-        if (msg.type === 'metadata' || msg.type === 'call_analysis') {
+        if (msg.type === 'metadata' || msg.event_type === 'metadata' || msg.type === 'call_analysis' || msg.event_type === 'call_analysis') {
           if (msg.call_analysis) {
             leadData.conversationSummary = msg.call_analysis.call_summary || '';
           }
         }
 
         // --- FORMAT 5: Call ended signal ---
-        if (msg.type === 'call_ended' || msg.event === 'call_ended' ||
-            msg.type === 'hangup' || msg.event === 'hangup') {
+        if (msg.type === 'call_ended' || msg.event_type === 'call_ended' ||
+            msg.event === 'call_ended' || msg.type === 'hangup') {
           if (msg.call_analysis) {
             leadData.conversationSummary = msg.call_analysis.call_summary || '';
           }
