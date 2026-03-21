@@ -7,7 +7,7 @@
   <meta name="description" content="Speak with our AI advisor to find the right insurance and financial coverage for your needs. Free, confidential consultation." />
 
   <!-- Retell AI Web SDK -->
-  <script src="https://cdn.jsdelivr.net/npm/retell-client-js-sdk@2.0.7/dist/index.umd.js"></script>
+
 
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -824,6 +824,31 @@ function showReferralCard() {
 }
 
 // ============================================================
+// LOAD RETELL SDK DYNAMICALLY (avoids tracking prevention)
+// ============================================================
+function loadRetellSDK() {
+  return new Promise((resolve, reject) => {
+    if (window.RetellWebClient || 
+        (window.RetellClientJsSdk && window.RetellClientJsSdk.RetellWebClient)) {
+      return resolve();
+    }
+    const script = document.createElement('script');
+    script.src = 'https://unpkg.com/retell-client-js-sdk@2.0.7/dist/index.umd.js';
+    script.crossOrigin = 'anonymous';
+    script.onload = () => resolve();
+    script.onerror = () => {
+      // Fallback to jsdelivr
+      const s2 = document.createElement('script');
+      s2.src = 'https://cdn.jsdelivr.net/npm/retell-client-js-sdk@2.0.7/dist/index.umd.js';
+      s2.onload = () => resolve();
+      s2.onerror = () => reject(new Error('Could not load Retell SDK from any CDN'));
+      document.head.appendChild(s2);
+    };
+    document.head.appendChild(script);
+  });
+}
+
+// ============================================================
 // START CONVERSATION
 // ============================================================
 async function startConversation() {
@@ -845,10 +870,15 @@ async function startConversation() {
     sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
 
     // 2. Initialize Retell client with the access token
-    // UMD bundle may expose class under RetellClientJsSdk namespace
-    const RWC = window.RetellWebClient || 
-                (window.RetellClientJsSdk && window.RetellClientJsSdk.RetellWebClient);
-    if (!RWC) throw new Error("Retell SDK not loaded");
+    let RWC = window.RetellWebClient;
+    if (!RWC && window.RetellClientJsSdk) RWC = window.RetellClientJsSdk.RetellWebClient;
+    if (!RWC && window.retellClientJsSdk) RWC = window.retellClientJsSdk.RetellWebClient;
+    if (!RWC) {
+      // Log all globals to debug
+      const retellGlobals = Object.keys(window).filter(k => k.toLowerCase().includes('retell'));
+      console.log('Available Retell globals:', retellGlobals);
+      throw new Error("Retell SDK not loaded. Globals: " + retellGlobals.join(', '));
+    }
     retellClient = new RWC();
     bindRetellEvents();
 
