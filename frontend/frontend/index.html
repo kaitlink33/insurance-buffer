@@ -635,7 +635,6 @@
     <div class="trust-section">
 
       <div class="trust-card">
-        <div class="trust-card-icon">🛡️</div>
         <h3>Comprehensive Coverage Options</h3>
         <p>
           From your home and auto to your farm, business, life insurance, and retirement
@@ -647,12 +646,10 @@
           <span class="pillar-chip">Life Insurance</span>
           <span class="pillar-chip">Business</span>
           <span class="pillar-chip">Retirement</span>
-          <span class="pillar-chip">Financial Services</span>
         </div>
       </div>
 
       <div class="trust-card">
-        <div class="trust-card-icon">⭐</div>
         <h3>Why Clients Stay With Us</h3>
         <p>
           Our clients consistently report exceptional claims experiences, competitive rates,
@@ -662,7 +659,6 @@
       </div>
 
       <div class="trust-card">
-        <div class="trust-card-icon">🔒</div>
         <h3>Confidential &amp; Pressure-Free</h3>
         <p>
           This conversation is completely confidential. Your information is used only to
@@ -747,22 +743,27 @@
 </div>
 
 <!-- ===================== JAVASCRIPT ===================== -->
-<script>
+<script type="module">
 // ============================================================
 // CONFIG — Backend URL only. NO API KEYS IN THIS FILE.
 // ============================================================
-const BACKEND_URL = window.BACKEND_URL || 'https://insurance-buffer.onrender.com';
+const BACKEND_URL = 'https://insurance-buffer.onrender.com';
 const RETELL_PUBLIC_KEY = 'public_key_9da7a4a21855c8bed852e';
 const RETELL_AGENT_ID   = 'agent_ba8d7cc9505418ac6c2040a0cf';
 
 // ============================================================
+// IMPORT LIVEKIT + RETELL SDK VIA ESM (no CDN blocking issues)
+// ============================================================
+import { Room, RoomEvent, Track, DataPacket_Kind } from 'https://cdn.jsdelivr.net/npm/livekit-client@2.5.3/dist/livekit-client.esm.mjs';
+
+// ============================================================
 // STATE
 // ============================================================
-let retellClient = null;
-let callActive   = false;
-let sessionId    = null;
-let transcript   = [];  // Array of {role, content}
-let leadData     = {
+let room = null;
+let callActive = false;
+let sessionId = null;
+let transcript = [];
+let leadData = {
   visitorName: null,
   contactInfo: null,
   wantsReferral: false,
@@ -809,8 +810,6 @@ function appendMessage(role, content) {
   div.appendChild(bubble);
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
-
-  // Track for transcript
   transcript.push({ role, content });
 }
 
@@ -824,31 +823,6 @@ function showReferralCard() {
 }
 
 // ============================================================
-// LOAD RETELL SDK DYNAMICALLY (avoids tracking prevention)
-// ============================================================
-function loadRetellSDK() {
-  return new Promise((resolve, reject) => {
-    if (window.RetellWebClient || 
-        (window.RetellClientJsSdk && window.RetellClientJsSdk.RetellWebClient)) {
-      return resolve();
-    }
-    const script = document.createElement('script');
-    script.src = 'https://unpkg.com/retell-client-js-sdk@2.0.7/dist/index.umd.js';
-    script.crossOrigin = 'anonymous';
-    script.onload = () => resolve();
-    script.onerror = () => {
-      // Fallback to jsdelivr
-      const s2 = document.createElement('script');
-      s2.src = 'https://cdn.jsdelivr.net/npm/retell-client-js-sdk@2.0.7/dist/index.umd.js';
-      s2.onload = () => resolve();
-      s2.onerror = () => reject(new Error('Could not load Retell SDK from any CDN'));
-      document.head.appendChild(s2);
-    };
-    document.head.appendChild(script);
-  });
-}
-
-// ============================================================
 // START CONVERSATION
 // ============================================================
 async function startConversation() {
@@ -857,7 +831,7 @@ async function startConversation() {
   setStatus('Connecting…', '');
 
   try {
-    // 1. Request web_call_id from our Java backend (API key stays server-side)
+    // 1. Get access token from Java backend
     const res = await fetch(BACKEND_URL + '/api/start-call', { method: 'POST' });
     if (!res.ok) throw new Error('Backend error: ' + res.status);
     const data = await res.json();
@@ -866,28 +840,77 @@ async function startConversation() {
       throw new Error(data.error || 'No access token received');
     }
 
-    // Generate session ID for this lead
     sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
 
-    // 2. Initialize Retell client with the access token
-    let RWC = window.RetellWebClient;
-    if (!RWC && window.RetellClientJsSdk) RWC = window.RetellClientJsSdk.RetellWebClient;
-    if (!RWC && window.retellClientJsSdk) RWC = window.retellClientJsSdk.RetellWebClient;
-    if (!RWC) {
-      // Log all globals to debug
-      const retellGlobals = Object.keys(window).filter(k => k.toLowerCase().includes('retell'));
-      console.log('Available Retell globals:', retellGlobals);
-      throw new Error("Retell SDK not loaded. Globals: " + retellGlobals.join(', '));
-    }
-    retellClient = new RWC();
-    bindRetellEvents();
-
-    await retellClient.startCall({
-      accessToken: data.access_token,
-      sampleRate: 24000,
-      captureDeviceId: 'default',
-      emitRawAudioSamples: false,
+    // 2. Connect to LiveKit room directly (what Retell SDK does internally)
+    const LIVEKIT_URL = 'wss://retell-ai-4ihahnq7.livekit.cloud';
+    room = new Room({
+      audioCaptureDefaults: {
+        autoGainControl: true,
+        echoCancellation: true,
+        noiseSuppression: true,
+        channelCount: 1,
+        sampleRate: 24000,
+      },
     });
+
+    // 3. Bind room events
+    room.on(RoomEvent.DataReceived, (payload, participant) => {
+      try {
+        const decoder = new TextDecoder();
+        const msg = JSON.parse(decoder.decode(payload));
+        // Handle transcript updates
+        if (msg.type === 'transcript' && msg.data) {
+          const role = msg.data.role === 'agent' ? 'agent' : 'user';
+          if (msg.data.content && msg.data.content.trim()) {
+            // Rebuild transcript from full list if provided
+            if (Array.isArray(msg.data)) {
+              const container = document.getElementById('chat-messages');
+              const empty = document.getElementById('empty-state');
+              if (empty) empty.remove();
+              container.innerHTML = '';
+              transcript = [];
+              msg.data.forEach(t => appendMessage(t.role === 'agent' ? 'agent' : 'user', t.content));
+            } else {
+              appendMessage(role, msg.data.content);
+            }
+          }
+        }
+        // Handle update events (full transcript array)
+        if (msg.type === 'update' && msg.transcript) {
+          const container = document.getElementById('chat-messages');
+          const empty = document.getElementById('empty-state');
+          if (empty) empty.remove();
+          container.innerHTML = '';
+          transcript = [];
+          msg.transcript.forEach(t => appendMessage(t.role === 'agent' ? 'agent' : 'user', t.content));
+        }
+        // Call ended signal
+        if (msg.type === 'call_ended' || msg.event === 'call_ended') {
+          handleCallEnded(msg);
+        }
+      } catch(e) { /* non-JSON data packets, ignore */ }
+    });
+
+    room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+      if (track.kind === Track.Kind.Audio) {
+        track.attach();
+        setStatus('Connected · Listening', 'active');
+        setVoiceActive(true);
+      }
+    });
+
+    room.on(RoomEvent.ParticipantConnected, (participant) => {
+      setStatus('Advisor connected', 'active');
+    });
+
+    room.on(RoomEvent.Disconnected, () => {
+      if (callActive) handleCallEnded({});
+    });
+
+    // 4. Connect
+    await room.connect(LIVEKIT_URL, data.access_token);
+    await room.localParticipant.setMicrophoneEnabled(true);
 
     callActive = true;
     showLoading(false);
@@ -903,96 +926,41 @@ async function startConversation() {
     setStatus('Connection failed', 'error');
     setStatusLabel('Unable to connect. Please check your microphone and try again.');
     document.getElementById('btn-start').disabled = false;
-    console.error('Retell start error:', err);
+    console.error('Call start error:', err);
   }
 }
 
 // ============================================================
-// BIND RETELL EVENTS
-// ============================================================
-function bindRetellEvents() {
-  // Transcript updates — shows live captions
-  retellClient.on('update', (update) => {
-    if (!update || !update.transcript) return;
-
-    // Re-render all messages from the latest full transcript
-    const container = document.getElementById('chat-messages');
-    const empty = document.getElementById('empty-state');
-    if (empty) empty.remove();
-    container.innerHTML = '';
-
-    transcript = [];
-    for (const turn of update.transcript) {
-      const role = turn.role === 'agent' ? 'agent' : 'user';
-      appendMessage(role, turn.content);
-    }
-  });
-
-  retellClient.on('agent_start_talking', () => {
-    setStatus('Advisor speaking…', 'speaking');
-    setVoiceActive(true);
-  });
-
-  retellClient.on('agent_stop_talking', () => {
-    setStatus('Connected · Listening', 'active');
-  });
-
-  retellClient.on('call_ended', (data) => {
-    callActive = false;
-    setStatus('Conversation complete', '');
-    setVoiceActive(false);
-    setStatusLabel('Thank you for chatting with us.');
-    document.getElementById('btn-end').style.display = 'none';
-    document.getElementById('btn-start').style.display = 'none';
-
-    // Parse any lead data from the final transcript/metadata
-    if (data && data.call) {
-      parseFinalCallData(data.call);
-    }
-
-    submitLead();
-  });
-
-  retellClient.on('error', (err) => {
-    console.error('Retell error:', err);
-    setStatus('Connection error', 'error');
-    setVoiceActive(false);
-    document.getElementById('btn-end').style.display = 'none';
-    document.getElementById('btn-start').disabled = false;
-    document.getElementById('btn-start').style.display = 'block';
-  });
-}
-
-// ============================================================
-// END CONVERSATION (manual)
+// END CONVERSATION
 // ============================================================
 function endConversation() {
-  if (retellClient && callActive) {
-    retellClient.stopCall();
+  if (room && callActive) {
+    room.disconnect();
   }
 }
 
 // ============================================================
-// PARSE FINAL CALL DATA
+// HANDLE CALL ENDED
 // ============================================================
-function parseFinalCallData(callData) {
-  // Extract summary from Retell call metadata if available
-  if (callData.call_analysis) {
-    leadData.conversationSummary = callData.call_analysis.call_summary || '';
-    leadData.wantsReferral = callData.call_analysis.user_sentiment === 'Positive';
-  }
+function handleCallEnded(data) {
+  callActive = false;
+  setStatus('Conversation complete', '');
+  setVoiceActive(false);
+  setStatusLabel('Thank you for chatting with us.');
+  document.getElementById('btn-end').style.display = 'none';
+  document.getElementById('btn-start').style.display = 'none';
 
-  // Build raw transcript from our tracked messages
-  leadData.rawTranscript = transcript
-    .map(m => m.role.toUpperCase() + ': ' + m.content)
-    .join('\n');
+  // Build transcript
+  leadData.rawTranscript = transcript.map(m => m.role.toUpperCase() + ': ' + m.content).join('\n');
 
-  // Heuristic: check transcript text for referral intent
+  // Check for referral intent
   const fullText = leadData.rawTranscript.toLowerCase();
   if (fullText.includes('yes') || fullText.includes('learn more') ||
-      fullText.includes('connect') || fullText.includes('speak')) {
+      fullText.includes('connect') || fullText.includes('speak with')) {
     leadData.wantsReferral = true;
   }
+
+  submitLead();
 }
 
 // ============================================================
@@ -1000,7 +968,6 @@ function parseFinalCallData(callData) {
 // ============================================================
 async function submitLead() {
   if (!sessionId) return;
-
   try {
     const payload = {
       sessionId,
@@ -1021,18 +988,20 @@ async function submitLead() {
 
     if (res.ok) {
       const result = await res.json();
-      console.log('Lead submitted:', result.leadType, 'score:', result.score);
-
-      // Show referral card if they want follow-up
       if (leadData.wantsReferral || result.referralUrl) {
         showReferralCard();
       }
     }
   } catch (err) {
     console.error('Lead submission error:', err);
-    // Fail silently — don't disrupt user experience
   }
 }
+
+// ============================================================
+// EXPOSE FUNCTIONS TO BUTTON onclick HANDLERS
+// ============================================================
+window.startConversation = startConversation;
+window.endConversation = endConversation;
 </script>
 
 </body>
