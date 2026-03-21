@@ -737,7 +737,7 @@
 
   <!-- FOOTER -->
   <footer>
-    <p>© 2025 Your Insurance Advisor &nbsp;·&nbsp; All conversations are private and confidential.</p>
+    <p>Insurance Advisor &nbsp;·&nbsp; All conversations are private and confidential.</p>
     <p style="margin-top:4px;">Serving families, farms, and businesses across the region.</p>
   </footer>
 
@@ -859,38 +859,59 @@ async function startConversation() {
     room.on(RoomEvent.DataReceived, (payload, participant) => {
       try {
         const decoder = new TextDecoder();
-        const msg = JSON.parse(decoder.decode(payload));
-        // Handle transcript updates
-        if (msg.type === 'transcript' && msg.data) {
-          const role = msg.data.role === 'agent' ? 'agent' : 'user';
-          if (msg.data.content && msg.data.content.trim()) {
-            // Rebuild transcript from full list if provided
-            if (Array.isArray(msg.data)) {
-              const container = document.getElementById('chat-messages');
-              const empty = document.getElementById('empty-state');
-              if (empty) empty.remove();
-              container.innerHTML = '';
-              transcript = [];
-              msg.data.forEach(t => appendMessage(t.role === 'agent' ? 'agent' : 'user', t.content));
-            } else {
-              appendMessage(role, msg.data.content);
-            }
-          }
-        }
-        // Handle update events (full transcript array)
-        if (msg.type === 'update' && msg.transcript) {
+        const raw = decoder.decode(payload);
+        const msg = JSON.parse(raw);
+
+        // Log every message so we can see Retell's exact format
+        console.log('Retell data packet:', msg.type || msg.event, msg);
+
+        // --- FORMAT 1: Retell "update" with full transcript array ---
+        if (msg.type === 'update' && Array.isArray(msg.transcript)) {
           const container = document.getElementById('chat-messages');
           const empty = document.getElementById('empty-state');
           if (empty) empty.remove();
           container.innerHTML = '';
           transcript = [];
-          msg.transcript.forEach(t => appendMessage(t.role === 'agent' ? 'agent' : 'user', t.content));
+          msg.transcript.forEach(t => {
+            if (t.content && t.content.trim()) {
+              appendMessage(t.role === 'agent' ? 'agent' : 'user', t.content);
+            }
+          });
         }
-        // Call ended signal
-        if (msg.type === 'call_ended' || msg.event === 'call_ended') {
+
+        // --- FORMAT 2: Single transcript turn ---
+        if (msg.type === 'transcript') {
+          const d = msg.data || msg;
+          const role = (d.role === 'agent' || d.speaker === 'agent') ? 'agent' : 'user';
+          const content = d.content || d.text || d.message || '';
+          if (content.trim()) appendMessage(role, content);
+        }
+
+        // --- FORMAT 3: Retell "clear_transcript" ---
+        if (msg.type === 'clear_transcript') {
+          document.getElementById('chat-messages').innerHTML = '';
+          transcript = [];
+        }
+
+        // --- FORMAT 4: Call metadata / summary at end ---
+        if (msg.type === 'metadata' || msg.type === 'call_analysis') {
+          if (msg.call_analysis) {
+            leadData.conversationSummary = msg.call_analysis.call_summary || '';
+          }
+        }
+
+        // --- FORMAT 5: Call ended signal ---
+        if (msg.type === 'call_ended' || msg.event === 'call_ended' ||
+            msg.type === 'hangup' || msg.event === 'hangup') {
+          if (msg.call_analysis) {
+            leadData.conversationSummary = msg.call_analysis.call_summary || '';
+          }
           handleCallEnded(msg);
         }
-      } catch(e) { /* non-JSON data packets, ignore */ }
+
+      } catch(e) {
+        // Non-JSON binary packet — ignore silently
+      }
     });
 
     room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
